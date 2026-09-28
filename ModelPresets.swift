@@ -33,6 +33,14 @@ private enum Preset: String, CaseIterable {
     var fast: Bool { self == .luna }
 }
 
+private enum Timing {
+    static let clickGap: TimeInterval = 0.04
+    static let clickSettle: TimeInterval = 0.15
+    static let keySettle: TimeInterval = 0.07
+    static let poll: TimeInterval = 0.04
+    static let callbackDelay: TimeInterval = 0.2
+}
+
 private enum SwitchError: LocalizedError {
     case accessibility
     case appNotRunning
@@ -130,7 +138,7 @@ private final class CodexControls {
         let deadline = Date().addingTimeInterval(seconds)
         repeat {
             if let control = find(try window(), role: role, title: title) { return control }
-            Thread.sleep(forTimeInterval: 0.06)
+            Thread.sleep(forTimeInterval: Timing.poll)
         } while Date() < deadline
         if debug {
             var titles: [String] = []
@@ -171,9 +179,9 @@ private final class CodexControls {
             throw SwitchError.control("鼠标点击")
         }
         down.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.05)
+        Thread.sleep(forTimeInterval: Timing.clickGap)
         up.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.25)
+        Thread.sleep(forTimeInterval: Timing.clickSettle)
     }
 
     private func click(_ element: AXUIElement) throws {
@@ -189,7 +197,7 @@ private final class CodexControls {
         up.flags = flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.1)
+        Thread.sleep(forTimeInterval: Timing.keySettle)
     }
 
     private func activate() throws {
@@ -236,13 +244,14 @@ private final class CodexControls {
         guard try !pickerIsOpen() else { throw SwitchError.verification("选择菜单没有关闭") }
     }
 
-    private func menuText(prefix: String) throws -> String {
+    private func menuText(prefix: String, powerIndex: Int? = nil) throws -> String {
         var seen: [String] = []
         func search(_ element: AXUIElement) -> String? {
             if value(element, kAXRoleAttribute as String) as? String == "AXStaticText",
                let text = value(element, kAXValueAttribute as String) as? String {
                 seen.append(text)
-                if text.hasPrefix(prefix), text.contains(" of ") { return text }
+                let matchesPower = powerIndex.map { text.contains(", \($0) of 5.") } ?? true
+                if text.hasPrefix(prefix), text.contains(" of "), matchesPower { return text }
             }
             for child in children(of: element) {
                 if let text = search(child) { return text }
@@ -253,7 +262,7 @@ private final class CodexControls {
         repeat {
             seen.removeAll()
             if let text = search(try effortMenu()) { return text }
-            Thread.sleep(forTimeInterval: 0.1)
+            Thread.sleep(forTimeInterval: Timing.poll)
         } while Date() < deadline
         log("static texts=\(seen)")
         throw SwitchError.control("推理强度状态")
@@ -301,8 +310,10 @@ private final class CodexControls {
             throw SwitchError.control("推理强度滑条")
         }
         let box = try frame(slider)
-        try click(CGPoint(x: box.minX + (CGFloat(preset.powerIndex) - 0.5) * box.width / 5,
-                          y: box.midY))
+        let sliderPoint = CGPoint(x: box.minX + (CGFloat(preset.powerIndex) - 0.5) * box.width / 5,
+                                  y: box.midY)
+        log("click power at \(sliderPoint.x),\(sliderPoint.y) frame=\(box)")
+        try click(sliderPoint)
 
         if try isFast() != preset.fast {
             let toggle = preset.fast ? "Enable fast mode" : "Enable standard mode"
@@ -310,7 +321,7 @@ private final class CodexControls {
         }
 
         let expected = "\(preset.modelMenuTitle) "
-        let text = try menuText(prefix: expected)
+        let text = try menuText(prefix: expected, powerIndex: preset.powerIndex)
         guard text.hasPrefix(expected), text.contains(", \(preset.powerIndex) of 5.") else {
             throw SwitchError.verification(text)
         }
@@ -350,7 +361,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             fputs("DEBUG: button sender=\(type(of: sender)), preset=\(name ?? "nil")\n", stderr)
         }
         guard let name, let preset = Preset(rawValue: name) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.callbackDelay) {
             do {
                 try CodexControls().apply(preset)
             } catch {
