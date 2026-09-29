@@ -22,6 +22,16 @@ private enum Preset: String, CaseIterable {
         }
     }
 
+    var modelMenuTitles: [String] { [modelMenuTitle, "GPT-\(modelMenuTitle)"] }
+
+    var effortTitles: [String] {
+        switch self {
+        case .luna: ["Max", "最大"]
+        case .sol: ["Extra High", "极高"]
+        case .astra: ["Medium", "中"]
+        }
+    }
+
     var powerIndex: Int {
         switch self {
         case .luna: 5
@@ -90,6 +100,7 @@ private final class CodexControls {
         }
         self.app = app
         self.axApp = AXUIElementCreateApplication(app.processIdentifier)
+        _ = AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     }
 
     private func value(_ element: AXUIElement, _ key: String) -> Any? {
@@ -109,9 +120,25 @@ private final class CodexControls {
         return nil
     }
 
+    private func findAny(_ element: AXUIElement, role: String, titles: [String]) -> AXUIElement? {
+        if value(element, kAXRoleAttribute as String) as? String == role,
+           let title = value(element, kAXTitleAttribute as String) as? String,
+           titles.contains(title) {
+            return element
+        }
+        for child in children(of: element) {
+            if let match = findAny(child, role: role, titles: titles) { return match }
+        }
+        return nil
+    }
+
+    private func input(in element: AXUIElement) -> AXUIElement? {
+        findAny(element, role: "AXTextArea", titles: ["Do anything", "随心输入"])
+    }
+
     private func window() throws -> AXUIElement {
         for candidate in value(axApp, kAXWindowsAttribute as String) as? [AXUIElement] ?? [] {
-            if find(candidate, role: "AXTextArea", title: "Do anything") != nil {
+            if input(in: candidate) != nil {
                 let currentTitle = find(candidate, role: "AXWebArea")
                     .flatMap { value($0, kAXTitleAttribute as String) as? String }
                 if let targetTitle, currentTitle != targetTitle {
@@ -125,32 +152,13 @@ private final class CodexControls {
 
     private func focusInput() throws {
         _ = app.activate(options: .activateAllWindows)
-        guard let input = find(try window(), role: "AXTextArea", title: "Do anything") else {
+        guard let input = input(in: try window()) else {
             throw SwitchError.control("Codex 输入框")
         }
         let result = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         guard result == .success, value(input, kAXFocusedAttribute as String) as? Bool == true else {
             throw SwitchError.control("输入框焦点")
         }
-    }
-
-    private func waitFor(_ role: String, title: String, seconds: TimeInterval = 2) throws -> AXUIElement {
-        let deadline = Date().addingTimeInterval(seconds)
-        repeat {
-            if let control = find(try window(), role: role, title: title) { return control }
-            Thread.sleep(forTimeInterval: Timing.poll)
-        } while Date() < deadline
-        if debug {
-            var titles: [String] = []
-            func collect(_ element: AXUIElement) {
-                if value(element, kAXRoleAttribute as String) as? String == "AXMenuItem",
-                   let name = value(element, kAXTitleAttribute as String) as? String { titles.append(name) }
-                for child in children(of: element) { collect(child) }
-            }
-            if let candidate = try? window() { collect(candidate) }
-            log("missing \(title); menus=\(titles.suffix(20)); active=\(app.isActive)")
-        }
-        throw SwitchError.control(title)
     }
 
     private func children(of element: AXUIElement) -> [AXUIElement] {
@@ -211,29 +219,40 @@ private final class CodexControls {
 
     private func effortMenu() throws -> AXUIElement {
         if let menu = find(try window(), role: "AXGroup", title: "Select effort") { return menu }
-        func modelPopup(_ element: AXUIElement) -> AXUIElement? {
-            if value(element, kAXRoleAttribute as String) as? String == "AXPopUpButton",
-               let title = value(element, kAXTitleAttribute as String) as? String,
-               ["6 Sol", "6 Astra", "6 Luna", "5.6 Sol", "5.6 Terra", "5.6 Luna", "5.5"].contains(where: title.hasPrefix) {
-                return element
-            }
-            for child in children(of: element) {
-                if let match = modelPopup(child) { return match }
-            }
-            return nil
-        }
-        if let popup = modelPopup(try window()) {
+        if let menu = menuContainer(in: try window()) { return menu }
+        if let popup = modelPopup(in: try window()) {
             try click(popup)
-            if let menu = try? waitFor("AXGroup", title: "Select effort", seconds: 0.6) { return menu }
+            if let menu = try? waitForMenu(seconds: 0.6) { return menu }
         }
         key(46, flags: [.maskControl, .maskShift]) // Codex: Control-Shift-M
-        return try waitFor("AXGroup", title: "Select effort")
+        return try waitForMenu()
+    }
+
+    private func waitForMenu(seconds: TimeInterval = 2) throws -> AXUIElement {
+        let deadline = Date().addingTimeInterval(seconds)
+        repeat {
+            let root = try window()
+            if let menu = menuContainer(in: root) { return menu }
+            Thread.sleep(forTimeInterval: Timing.poll)
+        } while Date() < deadline
+        throw SwitchError.control("模型菜单")
+    }
+
+    private func menuContainer(in root: AXUIElement) -> AXUIElement? {
+        guard let select = findAny(root, role: "AXMenuItem", titles: ["Select model", "选择模型"]) else {
+            return nil
+        }
+        guard let parent = value(select, kAXParentAttribute as String),
+              let container = value(parent as! AXUIElement, kAXParentAttribute as String) else {
+            return root
+        }
+        return (container as! AXUIElement)
     }
 
     private func pickerIsOpen() throws -> Bool {
         let root = try window()
         return find(root, role: "AXGroup", title: "Select effort") != nil
-            || find(root, role: "AXMenuItem", title: "Default Recommended set of models") != nil
+            || findAny(root, role: "AXMenuItem", titles: ["Select model", "选择模型", "Default Recommended set of models", "默认 推荐模型集"]) != nil
     }
 
     private func closePicker() throws {
@@ -244,14 +263,23 @@ private final class CodexControls {
         guard try !pickerIsOpen() else { throw SwitchError.verification("选择菜单没有关闭") }
     }
 
-    private func menuText(prefix: String, powerIndex: Int? = nil) throws -> String {
+    private func powerState(for preset: Preset, powerIndex: Int? = nil) throws -> (text: String, index: Int, total: Int) {
         var seen: [String] = []
-        func search(_ element: AXUIElement) -> String? {
+        let regexes = [", ([0-9]+) of ([0-9]+)\\.", "，第 ([0-9]+) 项，共 ([0-9]+) 项。"]
+            .compactMap { try? NSRegularExpression(pattern: $0) }
+        func search(_ element: AXUIElement) -> (String, Int, Int)? {
             if value(element, kAXRoleAttribute as String) as? String == "AXStaticText",
                let text = value(element, kAXValueAttribute as String) as? String {
                 seen.append(text)
-                let matchesPower = powerIndex.map { text.contains(", \($0) of 5.") } ?? true
-                if text.hasPrefix(prefix), text.contains(" of "), matchesPower { return text }
+                if preset.modelMenuTitles.contains(where: text.hasPrefix) {
+                    for regex in regexes {
+                        guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                              let indexRange = Range(match.range(at: 1), in: text),
+                              let totalRange = Range(match.range(at: 2), in: text),
+                              let index = Int(text[indexRange]), let total = Int(text[totalRange]) else { continue }
+                        if powerIndex == nil || index == powerIndex { return (text, index, total) }
+                    }
+                }
             }
             for child in children(of: element) {
                 if let text = search(child) { return text }
@@ -261,7 +289,7 @@ private final class CodexControls {
         let deadline = Date().addingTimeInterval(2)
         repeat {
             seen.removeAll()
-            if let text = search(try effortMenu()) { return text }
+            if let state = search(try effortMenu()) { return state }
             Thread.sleep(forTimeInterval: Timing.poll)
         } while Date() < deadline
         log("static texts=\(seen)")
@@ -270,8 +298,8 @@ private final class CodexControls {
 
     private func isFast() throws -> Bool {
         let menu = try effortMenu()
-        if find(menu, role: "AXMenuItem", title: "Enable standard mode") != nil { return true }
-        if find(menu, role: "AXMenuItem", title: "Enable fast mode") != nil { return false }
+        if findAny(menu, role: "AXMenuItem", titles: ["Enable standard mode", "启用标准模式"]) != nil { return true }
+        if findAny(menu, role: "AXMenuItem", titles: ["Enable fast mode", "启用快速模式"]) != nil { return false }
         throw SwitchError.control("Fast 模式状态")
     }
 
@@ -282,52 +310,82 @@ private final class CodexControls {
             .flatMap { value($0, kAXTitleAttribute as String) as? String }
         log("target chat=\(targetTitle ?? "unknown")")
         try closePicker()
+        if try isFast() != preset.fast {
+            let toggle = preset.fast ? ["Enable fast mode", "启用快速模式"] : ["Enable standard mode", "启用标准模式"]
+            guard let item = findAny(try effortMenu(), role: "AXMenuItem", titles: toggle) else {
+                throw SwitchError.control("Fast 模式开关")
+            }
+            try click(item)
+        }
         var modelItem: AXUIElement?
         for _ in 0..<5 {
-            if let visible = find(try window(), role: "AXMenuItem", title: preset.modelMenuTitle) {
+            if let visible = findAny(try window(), role: "AXMenuItem", titles: preset.modelMenuTitles) {
                 modelItem = visible
                 break
             }
             let menu = try effortMenu()
-            guard let select = find(menu, role: "AXMenuItem", title: "Select model") else {
+            guard let select = findAny(menu, role: "AXMenuItem", titles: ["Select model", "选择模型"]) else {
                 throw SwitchError.control("Select model")
             }
             try click(select)
             logMenu("after Select model")
-            modelItem = find(try window(), role: "AXMenuItem", title: preset.modelMenuTitle)
+            modelItem = findAny(try window(), role: "AXMenuItem", titles: preset.modelMenuTitles)
             if modelItem != nil { break }
         }
         guard let modelItem else { throw SwitchError.control(preset.modelMenuTitle) }
         try click(modelItem)
         log("clicked \(preset.modelMenuTitle)")
         logMenu("after model")
-        _ = try menuText(prefix: "\(preset.modelMenuTitle) ")
+        let currentPower = try powerState(for: preset)
         let menu = try effortMenu()
-        guard let power = find(menu, role: "AXMenuItem", title: "Power"),
+        guard let power = findAny(menu, role: "AXMenuItem", titles: ["Power", "强度"]),
               let first = children(of: power).first,
               let second = children(of: first).first,
               let slider = children(of: second).first else {
             throw SwitchError.control("推理强度滑条")
         }
         let box = try frame(slider)
-        let sliderPoint = CGPoint(x: box.minX + (CGFloat(preset.powerIndex) - 0.5) * box.width / 5,
+        let sliderPoint = CGPoint(x: box.minX + (CGFloat(preset.powerIndex) - 0.5) * box.width / CGFloat(currentPower.total),
                                   y: box.midY)
         log("click power at \(sliderPoint.x),\(sliderPoint.y) frame=\(box)")
         try click(sliderPoint)
 
-        if try isFast() != preset.fast {
-            let toggle = preset.fast ? "Enable fast mode" : "Enable standard mode"
-            try click(waitFor("AXMenuItem", title: toggle))
-        }
-
-        let expected = "\(preset.modelMenuTitle) "
-        let text = try menuText(prefix: expected, powerIndex: preset.powerIndex)
-        guard text.hasPrefix(expected), text.contains(", \(preset.powerIndex) of 5.") else {
-            throw SwitchError.verification(text)
+        let state = try powerState(for: preset, powerIndex: preset.powerIndex)
+        guard state.index == preset.powerIndex else {
+            throw SwitchError.verification(state.text)
         }
         guard try isFast() == preset.fast else { throw SwitchError.verification("Fast 状态不符") }
         try closePicker()
+        let deadline = Date().addingTimeInterval(1)
+        repeat {
+            let root = try window()
+            if let popup = modelPopup(in: root),
+               let title = value(popup, kAXTitleAttribute as String) as? String,
+               preset.modelMenuTitles.contains(where: title.hasPrefix),
+               preset.effortTitles.contains(where: title.hasSuffix),
+               try !pickerIsOpen() { break }
+            Thread.sleep(forTimeInterval: Timing.poll)
+        } while Date() < deadline
+        guard let popup = modelPopup(in: try window()),
+              let title = value(popup, kAXTitleAttribute as String) as? String,
+              preset.modelMenuTitles.contains(where: title.hasPrefix),
+              preset.effortTitles.contains(where: title.hasSuffix),
+              try !pickerIsOpen() else {
+            throw SwitchError.verification("菜单关闭后模型或强度未保持为 \(preset.label)")
+        }
         try focusInput()
+    }
+
+    private func modelPopup(in element: AXUIElement) -> AXUIElement? {
+        if value(element, kAXRoleAttribute as String) as? String == "AXPopUpButton",
+           let title = value(element, kAXTitleAttribute as String) as? String,
+           title.hasPrefix("GPT-") || ["6 Sol", "6 Astra", "6 Luna", "5.6 Sol", "5.6 Terra", "5.6 Luna", "5.5"].contains(where: title.hasPrefix) {
+            return element
+        }
+        for child in children(of: element) {
+            if let popup = modelPopup(in: child) { return popup }
+        }
+        return nil
     }
 }
 
