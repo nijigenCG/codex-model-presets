@@ -1,0 +1,21 @@
+Codex 模型按钮补丁 1.0.0（Apple Silicon / macOS 13+）
+
+1. 双击「Codex 模型按钮补丁.app」。
+2. 当前回复结束后，点击「安装补丁」。安装器会备份应用、退出并重新打开 Codex。
+3. 输入栏原模型选择器旁会显示 Sol 和 Luna。点击即切换当前聊天，成功后恢复输入焦点。
+
+Sol：GPT-6.1 Sol / XHigh / Standard
+Luna：GPT-6 Luna / Max / Fast
+
+卸载：再次打开安装器，点击「卸载并恢复原版」。
+Codex 更新：重新打开安装器安装；若提示界面结构不支持，需更新本补丁。
+
+这是非官方补丁，会修改 app.asar 并进行本地 ad-hoc 签名。原版整包备份位于：
+~/Library/Application Support/Codex Model Presets Patch/Backups/
+首次打开未公证安装器时，macOS 可能要求在系统设置「隐私与安全性」中允许打开。
+重新签名后，macOS 可能再次询问 Codex 的麦克风、辅助功能等权限。
+按钮不支持锁定模型的 Agent/Aeon 聊天；账号没有对应模型或 Fast 权限时按钮置灰。
+若原版更新器无法更新，请卸载补丁恢复官方签名后更新，再重新安装补丁。
+
+不需要 Python、Node、辅助功能模拟点击或独立聊天界面。
+源码：https://github.com/nijigenCG/codex-model-presets

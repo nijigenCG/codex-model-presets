@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": { "test": "node --test presets.test.cjs" },
+  "devDependencies": { "react": "19.2.0", "react-dom": "19.2.0", "jsdom": "27.0.0" }
+}

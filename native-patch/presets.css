@@ -1,0 +1,7 @@
+.codex-model-presets { display: inline-flex; align-items: center; gap: 4px; position: relative; flex-shrink: 0; }
+.codex-model-presets button { font: inherit; font-size: 12px; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 7px; padding: 3px 7px; cursor: pointer; white-space: nowrap; }
+.codex-model-presets button:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+.codex-model-presets button[aria-pressed="true"] { color: #1674e8; border-color: #1674e8; background: #1674e814; }
+.codex-model-presets button:disabled { opacity: .4; cursor: default; }
+.codex-model-presets button:focus-visible { outline: 2px solid #1674e8; outline-offset: 2px; }
+.codex-model-presets-error { position: absolute; bottom: 32px; right: 0; width: 260px; padding: 8px; border-radius: 8px; background: #fff3e7; color: #772900; font-size: 12px; box-shadow: 0 2px 10px #0002; z-index: 50; }
