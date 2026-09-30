@@ -2,17 +2,16 @@
 
 macOS 菜单栏工具，通过辅助功能操作 ChatGPT/Codex 桌面端当前聊天的原生模型选择器。
 
-它只保留三个日常预设：
+它只保留两个日常预设：
 
-- **Luna**：GPT-5.6 Luna · Max · Fast
-- **Sol**：GPT-6 Sol · Extra High · Standard
-- **Astra**：GPT-6 Astra · Medium · Standard
+- **Sol**：GPT-6.1 Sol · XHigh · Standard
+- **Luna**：GPT-6 Luna · Max · Fast
 
 ## 使用
 
-在 ChatGPT 桌面端打开目标 Codex 聊天，待当前回复结束后点击菜单栏中的 Luna、Sol 或 Astra。
+在 ChatGPT 桌面端打开目标 Codex 聊天，待当前回复结束后点击菜单栏中的 Sol 或 Luna。
 
-切换器会设置并核对模型、推理强度和 Fast 状态，成功后关闭选择菜单并恢复 Codex 输入框焦点。`◉` 菜单可退出切换器。
+切换器会设置并核对模型、推理强度和 Fast 状态，成功后关闭选择菜单并恢复 Codex 输入框焦点。右键任意按钮可退出切换器。
 
 ## 构建
 

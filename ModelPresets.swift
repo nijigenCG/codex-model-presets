@@ -2,23 +2,20 @@ import AppKit
 import ApplicationServices
 
 private enum Preset: String, CaseIterable {
-    case luna = "luna"
     case sol = "sol"
-    case astra = "astra"
+    case luna = "luna"
 
     var label: String {
         switch self {
-        case .luna: "5.6 Luna · Max · Fast"
-        case .sol: "6 Sol · Extra High"
-        case .astra: "6 Astra · Medium"
+        case .sol: "6.1 Sol · XHigh · Standard"
+        case .luna: "6 Luna · Max · Fast"
         }
     }
 
     var modelMenuTitle: String {
         switch self {
-        case .luna: "5.6 Luna"
-        case .sol: "6 Sol"
-        case .astra: "6 Astra"
+        case .sol: "6.1 Sol"
+        case .luna: "6 Luna"
         }
     }
 
@@ -28,7 +25,6 @@ private enum Preset: String, CaseIterable {
         switch self {
         case .luna: ["Max", "最大"]
         case .sol: ["Extra High", "极高"]
-        case .astra: ["Medium", "中"]
         }
     }
 
@@ -36,7 +32,6 @@ private enum Preset: String, CaseIterable {
         switch self {
         case .luna: 5
         case .sol: 4
-        case .astra: 2
         }
     }
 
@@ -379,7 +374,7 @@ private final class CodexControls {
     private func modelPopup(in element: AXUIElement) -> AXUIElement? {
         if value(element, kAXRoleAttribute as String) as? String == "AXPopUpButton",
            let title = value(element, kAXTitleAttribute as String) as? String,
-           title.hasPrefix("GPT-") || ["6 Sol", "6 Astra", "6 Luna", "5.6 Sol", "5.6 Terra", "5.6 Luna", "5.5"].contains(where: title.hasPrefix) {
+           title.hasPrefix("GPT-") || ["6.1 Sol", "6 Sol", "6 Astra", "6 Luna", "5.6 Sol", "5.6 Terra", "5.6 Luna", "5.5"].contains(where: title.hasPrefix) {
             return element
         }
         for child in children(of: element) {
@@ -396,24 +391,28 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         for preset in Preset.allCases {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.button?.title = preset == .luna ? "Luna" : preset == .sol ? "Sol" : "Astra"
+            item.button?.title = preset == .sol ? "Sol" : "Luna"
             item.button?.toolTip = preset.label
             item.button?.identifier = NSUserInterfaceItemIdentifier(preset.rawValue)
             item.button?.target = self
             item.button?.action = #selector(selectPreset(_:))
+            item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             statusItems.append(item)
         }
-        let utility = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        utility.button?.title = "◉"
-        utility.button?.toolTip = "Codex 快捷模型"
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: ""))
-        menu.items.forEach { $0.target = self }
-        utility.menu = menu
-        statusItems.append(utility)
     }
 
     @objc private func selectPreset(_ sender: AnyObject) {
+        if NSApp.currentEvent?.type == .rightMouseUp,
+           let item = statusItems.first(where: { $0.button === sender }) {
+            let menu = NSMenu()
+            let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "")
+            quitItem.target = self
+            menu.addItem(quitItem)
+            item.menu = menu
+            item.button?.performClick(nil)
+            item.menu = nil
+            return
+        }
         let name = (sender as? NSButton)?.identifier?.rawValue
         if ProcessInfo.processInfo.environment["CODEX_PRESETS_DEBUG"] == "1" {
             fputs("DEBUG: button sender=\(type(of: sender)), preset=\(name ?? "nil")\n", stderr)
