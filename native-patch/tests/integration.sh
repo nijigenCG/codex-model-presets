@@ -20,6 +20,7 @@ ditto "$original" "$test_app"
 "$installer" --install "$test_app"
 "$installer" --check "$test_app"
 "$installer" --startup-check "$test_app"
+python3 "$project_dir/native-patch/tests/startup.py" "$test_app"
 # Reproduce 1.0's valid signature but AMFI-rejected vendor entitlements.
 # Use a fresh inode: signing an executable just loaded by AMFI can yield EPERM.
 ditto "$test_app" "$rejected_app"
@@ -43,19 +44,22 @@ cat > "$project_dir/.build/integration/custom.json" <<'JSON'
 JSON
 "$installer" --install "$rejected_app" "$project_dir/.build/integration/custom.json"
 "$installer" --startup-check "$rejected_app"
-# Nested frameworks and helpers must retain OpenAI signatures.
-codesign -dv "$rejected_app/Contents/Frameworks/Codex Framework.framework" 2>&1 | rg 'TeamIdentifier=2DC432GLL2'
+# Services that already permit local frameworks retain OpenAI signatures.
+codesign -dv "$rejected_app/Contents/Frameworks/Codex Framework.framework/Versions/Current/Helpers/Codex (Service).app" 2>&1 | rg 'TeamIdentifier=2DC432GLL2'
 node "$project_dir/native-patch/tests/installed-config.cjs" "$rejected_app" "$project_dir/.build/integration/custom.json"
+python3 "$project_dir/native-patch/tests/startup.py" "$rejected_app"
 "$installer" --restore "$rejected_app"
 codesign --verify --deep --strict "$rejected_app"
 cmp "$original/Contents/Resources/app.asar" "$rejected_app/Contents/Resources/app.asar"
 cmp "$original/Contents/Info.plist" "$rejected_app/Contents/Info.plist"
 cmp "$original/Contents/MacOS/ChatGPT" "$rejected_app/Contents/MacOS/ChatGPT"
 cmp "$original/Contents/_CodeSignature/CodeResources" "$rejected_app/Contents/_CodeSignature/CodeResources"
+cmp "$original/Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework" "$rejected_app/Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework"
 "$installer" --restore "$test_app"
 codesign --verify --deep --strict "$test_app"
 cmp "$original/Contents/Resources/app.asar" "$test_app/Contents/Resources/app.asar"
 cmp "$original/Contents/Info.plist" "$test_app/Contents/Info.plist"
 cmp "$original/Contents/MacOS/ChatGPT" "$test_app/Contents/MacOS/ChatGPT"
 cmp "$original/Contents/_CodeSignature/CodeResources" "$test_app/Contents/_CodeSignature/CodeResources"
-print '副本安装、旧版启动故障复现和拒绝、修复重装、自定义配置、嵌套官方签名及字节级恢复验证通过。'
+cmp "$original/Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework" "$test_app/Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework"
+print '副本安装、实际启动和渲染、旧版受限权限拒绝、修复重装、自定义配置及字节级恢复验证通过。'

@@ -11,11 +11,11 @@
 
 ### 安装与更新
 
-请使用 [1.1.1 发布页](https://github.com/nijigenCG/codex-model-presets/releases/tag/native-patch-v1.1.1) 的 `Codex-Model-Presets-Patch-1.1.1.dmg`。**1.0.0 有启动缺陷，请勿继续安装。**1.1.0 的界面匹配不支持 26.1002.52244，请升级补丁。
+请使用 [1.1.2 发布页](https://github.com/nijigenCG/codex-model-presets/releases/tag/native-patch-v1.1.2) 的 `Codex-Model-Presets-Patch-1.1.2.dmg`。旧版补丁在当前 Codex 上有兼容或启动缺陷，请升级补丁。
 
 双击安装器，待当前回复结束后点击 **保存配置并安装**。安装器会备份完整原版应用，修改副本、更新 ASAR 完整性哈希并本地签名，通过签名、权限和系统进程加载检查后，退出并替换 Codex，再启动应用。安装器会观察新进程 5 秒；打不开或立即退出时，自动恢复原版并重新打开。
 
-1.0.0 的系统日志报错为 `The file is adhoc signed but contains restricted entitlements`。1.1.0 清除需要厂商证书的权限声明，只重签主应用并保留内部框架和助手的官方签名；主应用增加加载这些框架所需的本地权限。不修改系统 Gatekeeper 或 SIP。
+1.1.2 修复新版 Electron 的 `Failed to get integrity for validatable asar archive` 启动退出：同步更新 ASAR、Info.plist 和框架中的校验字典摘要，保留完整性校验。变更的框架和需要加载它的助手进行本地签名；原本允许加载本地框架的 Service 助手及其他未变更组件保留官方签名。清除本地签名不能持有的厂商权限声明，不修改系统 Gatekeeper 或 SIP。
 
 Codex 更新后重新运行安装器。补丁通过界面语义定位代码，支持资源文件名变化；更大范围的结构变化会拒绝修改，需要发布适配版本。1.1.1 适配 26.1002.52244 的新版模型分派函数，保留原生模型 ID 转换、权限确认和选择结果。结构检查也覆盖旧版 26.928.21956；副本安装验证版本：**26.1002.52244 / Apple Silicon**。
 
@@ -68,13 +68,13 @@ npm install
 npm test
 ```
 
-完整应用副本的安装、旧版受限权限回归、自定义配置重装和卸载验证（还需 Node.js 与 rg）：
+完整应用副本的安装、实际启动、旧版受限权限回归、自定义配置重装和卸载验证（还需 Node.js、Python 3 与 rg）：
 
 ```sh
 ./native-patch/tests/integration.sh /Applications/ChatGPT.app
 ```
 
-测试只替换 `.build/integration/` 中的应用副本，原版备份写入上面的备份目录。验证编译、匹配唯一性、混淆变量改名、生成代码语法、签名、受限权限拒绝、ASAR 内容完整性、自定义配置注入、保留框架签名和字节级恢复。系统进程加载检查通过挂起子进程完成，不执行 Codex 界面或聊天服务，不能证明完整界面启动成功。安装器配置界面和 12 项按钮测试通过；真实 Codex 聊天界面仍需安装后验收。自动恢复针对打不开或进程立即退出，不能识别存活进程的白屏。
+测试只替换 `.build/integration/` 中的应用副本，原版备份写入上面的备份目录。验证编译、匹配唯一性、混淆变量改名、生成代码语法、签名、受限权限拒绝、ASAR 内容与框架摘要、自定义配置注入和字节级恢复。实际启动测试使用临时 Electron 用户目录，运行 15 秒并检查主窗口完成加载、ready-to-show 和 React 渲染启动日志，结束后停止测试副本。安装前的系统加载检查仍使用挂起子进程；真实聊天按钮切换和焦点恢复需安装后验收。自动恢复针对打不开或进程立即退出，不能识别存活进程的白屏。
 
 ---
 

@@ -1,4 +1,26 @@
 import Foundation
+import CryptoKit
+
+let originalIntegrity: [String: Any] = ["ElectronAsarIntegrity": ["Resources/app.asar": ["algorithm": "SHA256", "hash": "original"]]]
+let patchedIntegrity: [String: Any] = ["ElectronAsarIntegrity": ["Resources/app.asar": ["algorithm": "SHA256", "hash": "patched"]]]
+let digest = Data(SHA256.hash(data: Data("Resources/app.asarSHA256original".utf8)))
+let slot = AsarIntegrityDigest.sentinel + Data([1, 1]) + digest
+let binary = Data([3, 4]) + slot + Data([5, 6])
+let updated = try AsarIntegrityDigest.updated(binary, from: originalIntegrity, to: patchedIntegrity)
+precondition(updated == Data([3, 4]) + AsarIntegrityDigest.sentinel + Data([1, 1]) + Data(SHA256.hash(data: Data("Resources/app.asarSHA256patched".utf8))) + Data([5, 6]))
+let verified = try AsarIntegrityDigest.updated(updated, from: patchedIntegrity, to: patchedIntegrity)
+precondition(verified == updated)
+for invalid in [binary + slot, AsarIntegrityDigest.sentinel, AsarIntegrityDigest.sentinel + Data([1, 2]) + digest,
+                AsarIntegrityDigest.sentinel + Data([1, 1]) + Data(repeating: 0, count: 32)] {
+    do { _ = try AsarIntegrityDigest.updated(invalid, from: originalIntegrity, to: patchedIntegrity); preconditionFailure("必须拒绝不兼容或损坏的框架校验摘要") }
+    catch { precondition(error is PatchFailure) }
+}
+let legacy = try AsarIntegrityDigest.updated(Data([1, 2]), from: originalIntegrity, to: patchedIntegrity)
+precondition(legacy == Data([1, 2]))
+let unused = AsarIntegrityDigest.sentinel + Data(repeating: 0, count: 34)
+let unusedResult = try AsarIntegrityDigest.updated(unused, from: originalIntegrity, to: patchedIntegrity)
+precondition(unusedResult == unused)
+print("框架校验摘要同步、修改范围、重复/截断/未知版本/原版摘要拒绝和旧框架兼容验证通过。")
 
 let app = URL(fileURLWithPath: CommandLine.arguments[1])
 let patch = NativePatch(resources: URL(fileURLWithPath: CommandLine.arguments[2]))

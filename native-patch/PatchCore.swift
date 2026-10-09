@@ -11,6 +11,41 @@ struct PatchFailure: LocalizedError {
 
 func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
+struct AsarIntegrityDigest {
+    // Electron's versioned integrity dictionary slot in the framework binary.
+    static let sentinel = Data("AGbevlPCksUGKNL8TSn7wGmJEuJsXb2A".utf8)
+
+    static func dictionaryHash(_ metadata: [String: Any]) throws -> Data {
+        guard let entries = metadata["ElectronAsarIntegrity"] as? [String: [String: String]], !entries.isEmpty else {
+            throw PatchFailure("资源校验字典无效。")
+        }
+        var bytes = Data()
+        for key in entries.keys.sorted(by: { $0.compare($1, options: .literal) == .orderedAscending }) {
+            guard let algorithm = entries[key]?["algorithm"], let hash = entries[key]?["hash"] else {
+                throw PatchFailure("资源校验字典无效。")
+            }
+            bytes.append(Data((key + algorithm + hash).utf8))
+        }
+        return Data(SHA256.hash(data: bytes))
+    }
+
+    static func updated(_ binary: Data, from original: [String: Any], to patched: [String: Any]) throws -> Data {
+        guard let slot = binary.range(of: sentinel) else { return binary }
+        guard binary.range(of: sentinel, in: slot.upperBound..<binary.endIndex) == nil,
+              binary.endIndex - slot.upperBound >= 34 else { throw PatchFailure("框架资源校验结构不受支持。") }
+        let flags = slot.upperBound
+        if binary[flags] == 0 { return binary }
+        guard binary[flags] == 1, binary[flags + 1] == 1 else { throw PatchFailure("框架资源校验版本不受支持。") }
+        let range = flags + 2..<flags + 34
+        guard binary.subdata(in: range) == (try dictionaryHash(original)) else {
+            throw PatchFailure("框架资源校验摘要与原版不匹配。")
+        }
+        var result = binary
+        result.replaceSubrange(range, with: try dictionaryHash(patched))
+        return result
+    }
+}
+
 @discardableResult
 func run(_ executable: String, _ arguments: [String]) throws -> Data {
     let task = Process(), output = Pipe()
@@ -126,7 +161,7 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.1.1"
+    static let version = "1.1.2"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
@@ -228,26 +263,51 @@ struct NativePatch {
         }
         guard let integrity = metadata["ElectronAsarIntegrity"] as? [String: Any],
               let entry = integrity["Resources/app.asar"] as? [String: Any], entry["hash"] as? String == archive.headerHash else { throw PatchFailure("应用完整性校验失败。") }
+        _ = try AsarIntegrityDigest.updated(Data(contentsOf: frameworkBinary(app)), from: metadata, to: metadata)
         _ = try replacements(archive)
         return "支持安装：Codex \(metadata["CFBundleShortVersionString"] ?? "")"
     }
 
     func prepare(_ original: URL, to copy: URL, backup: URL) throws {
         var metadata = try info(original)
+        let originalMetadata = metadata
         let archive = try Asar(original.appendingPathComponent("Contents/Resources/app.asar"))
         let edits = try replacements(archive)
         try run("/usr/bin/ditto", [original.path, copy.path])
         let hash = try archive.write(edits, to: copy.appendingPathComponent("Contents/Resources/app.asar"))
-        metadata["ElectronAsarIntegrity"] = ["Resources/app.asar": ["algorithm": "SHA256", "hash": hash]]
+        var integrity = metadata["ElectronAsarIntegrity"] as! [String: Any]
+        integrity["Resources/app.asar"] = ["algorithm": "SHA256", "hash": hash]
+        metadata["ElectronAsarIntegrity"] = integrity
         let plist = try PropertyListSerialization.data(fromPropertyList: metadata, format: .xml, options: 0)
         try plist.write(to: copy.appendingPathComponent("Contents/Info.plist"), options: .atomic)
         let marker: [String: Any] = ["patchVersion": Self.version, "appVersion": metadata["CFBundleShortVersionString"] ?? "",
             "originalHeaderHash": archive.headerHash, "patchedHeaderHash": hash, "backupPath": backup.path,
             "configurationHash": sha256(try configuration.encoded())]
         try JSONSerialization.data(withJSONObject: marker, options: [.prettyPrinted, .sortedKeys]).write(to: copy.appendingPathComponent(Self.markerPath))
+        let binaryURL = frameworkBinary(copy), binary = try Data(contentsOf: binaryURL)
+        let updated = try AsarIntegrityDigest.updated(binary, from: originalMetadata, to: metadata)
+        if updated != binary {
+            // Keep integrity validation enabled; change only its expected digest.
+            let handle = try FileHandle(forWritingTo: binaryURL)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: updated)
+            try handle.close()
+            let framework = copy.appendingPathComponent("Contents/Frameworks/Codex Framework.framework")
+            let helpers = framework.appendingPathComponent("Versions/Current/Helpers")
+            for helper in try FileManager.default.contentsOfDirectory(at: helpers, includingPropertiesForKeys: nil).filter({ $0.pathExtension == "app" }) {
+                if try signingInfo(helper).entitlements["com.apple.security.cs.disable-library-validation"] as? Bool != true {
+                    try signLocally(helper)
+                }
+            }
+            try run("/usr/bin/codesign", ["--force", "--sign", "-", "--preserve-metadata=flags,runtime", framework.path])
+        }
         try signLocally(copy)
         try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path])
         try verifyLocalLaunch(copy)
+    }
+
+    private func frameworkBinary(_ app: URL) -> URL {
+        app.appendingPathComponent("Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework")
     }
 
     private static func requiresVendorSignature(_ key: String) -> Bool {
@@ -270,8 +330,7 @@ struct NativePatch {
         for key in entitlements.keys.filter(Self.requiresVendorSignature) {
             entitlements.removeValue(forKey: key)
         }
-        // Keep nested OpenAI-signed frameworks/helpers intact. The local main
-        // executable needs this entitlement to load a different signing team.
+        // Local executables must be able to load locally or vendor signed code.
         entitlements["com.apple.security.cs.disable-library-validation"] = true
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("codex-preset-entitlements-\(UUID().uuidString).plist")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -291,7 +350,9 @@ struct NativePatch {
                 throw PatchFailure("本地签名缺少加载官方框架所需的权限。原应用未被替换。")
             }
         }
-        guard let executable = try info(app)["CFBundleExecutable"] as? String, !executable.contains("/") else { throw PatchFailure("应用启动入口无效。") }
+        let metadata = try info(app)
+        _ = try AsarIntegrityDigest.updated(Data(contentsOf: frameworkBinary(app)), from: metadata, to: metadata)
+        guard let executable = metadata["CFBundleExecutable"] as? String, !executable.contains("/") else { throw PatchFailure("应用启动入口无效。") }
         // AMFI still validates a suspended spawn. No application code, UI or
         // app-server executes; restricted ad-hoc entitlements cause SIGKILL.
         let path = app.appendingPathComponent("Contents/MacOS/\(executable)").path
