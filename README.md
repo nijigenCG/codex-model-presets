@@ -2,7 +2,7 @@
 
 ## 原生界面补丁（推荐）
 
-独立 DMG 安装器，在 Codex 输入栏原模型选择器旁加入 **Sol** 和 **Luna** 两个按钮：
+独立 DMG 安装器，在 Codex 输入栏原模型选择器旁加入两个可配置按钮。未配置时：
 
 - **Sol**：GPT-6.1 Sol · XHigh · Standard
 - **Luna**：GPT-6 Luna · Max · Fast
@@ -11,9 +11,36 @@
 
 ### 安装与更新
 
-打开 `Codex-Model-Presets-Patch-1.0.0.dmg`，双击安装器，待当前回复结束后点击 **安装补丁**。安装器会备份完整原版应用，修改副本、更新 ASAR 完整性哈希并本地签名，校验通过后退出并替换 Codex，再启动应用。
+请使用 [1.1.0 发布页](https://github.com/nijigenCG/codex-model-presets/releases/tag/native-patch-v1.1.0) 的 `Codex-Model-Presets-Patch-1.1.0.dmg`。**1.0.0 有启动缺陷，请勿继续安装。**
 
-Codex 更新后重新运行安装器。补丁通过界面语义定位代码，支持资源文件名变化；更大范围的结构变化会拒绝修改，需要发布适配版本。当前已验证版本：**26.928.21956 / Apple Silicon**。
+双击安装器，待当前回复结束后点击 **保存配置并安装**。安装器会备份完整原版应用，修改副本、更新 ASAR 完整性哈希并本地签名，通过签名、权限和系统进程加载检查后，退出并替换 Codex，再启动应用。安装器会观察新进程 5 秒；打不开或立即退出时，自动恢复原版并重新打开。
+
+1.0.0 的系统日志报错为 `The file is adhoc signed but contains restricted entitlements`。1.1.0 清除需要厂商证书的权限声明，只重签主应用并保留内部框架和助手的官方签名；主应用增加加载这些框架所需的本地权限。不修改系统 Gatekeeper 或 SIP。
+
+Codex 更新后重新运行安装器。补丁通过界面语义定位代码，支持资源文件名变化；更大范围的结构变化会拒绝修改，需要发布适配版本。副本验证版本：**26.928.21956 / Apple Silicon**。
+
+### 配置两个按钮
+
+安装器内可修改 **按钮名称、模型 ID、推理强度、Standard/Fast**，然后点击 **保存配置并安装**。名称或模型 ID 留空时采用该位置的默认值。**恢复默认配置** 会填回 Sol 和 Luna 的默认值，之后再保存安装。
+
+配置保存在本机，Codex 更新后重新安装会沿用配置：
+
+```text
+~/Library/Application Support/Codex Model Presets Patch/presets.json
+```
+
+也可直接编辑该 JSON，然后重新安装；缺少文件、空文件、`{}`、空预设列表和空字段均使用默认值。支持配置正好两个按钮，例如：
+
+```json
+{
+  "presets": [
+    { "label": "Sol", "model": "gpt-6.1-sol", "effort": "xhigh", "speed": "standard" },
+    { "label": "Luna", "model": "gpt-6-luna", "effort": "max", "speed": "fast" }
+  ]
+}
+```
+
+推理强度使用 `none/minimal/low/medium/high/xhigh/max/ultra` 中的一项；模型 ID 需要与当前 Codex 模型菜单一致。不支持的模型、强度或速度会让按钮置灰。配置嵌入本次应用补丁，修改 JSON 后需要重新安装才能生效。
 
 点击 **卸载并恢复原版** 可恢复同版本官方整包及其原签名。备份保存在：
 
@@ -21,7 +48,7 @@ Codex 更新后重新运行安装器。补丁通过界面语义定位代码，�
 ~/Library/Application Support/Codex Model Presets Patch/Backups/
 ```
 
-这是非官方客户端补丁，需使用 ad-hoc 签名，未经过 Apple 公证。macOS 可能要求允许打开安装器，或重新授权 Codex 的已有权限。若官方更新器无法更新，先卸载补丁恢复原版再更新。账号不支持目标模型、强度或 Fast，或聊天锁定模型时，按钮不可用。补丁不读取登录凭证。
+这是非官方客户端补丁，需使用 ad-hoc 签名，未经过 Apple 公证。macOS 可能要求允许打开安装器，或重新授权 Codex 的已有权限。补丁主应用无法保留需要 OpenAI 证书的应用组、推送和钥匙串组声明；依赖这些声明的功能尚未验证。若官方更新器无法更新，先卸载补丁恢复原版再更新。补丁不读取登录凭证。
 
 ### 构建与验证
 
@@ -33,7 +60,7 @@ Codex 更新后重新运行安装器。补丁通过界面语义定位代码，�
 
 生成的 DMG 只包含本项目的安装器和补丁，不包含 OpenAI 客户端代码。
 
-按钮测试使用真实 React 和 jsdom，覆盖两个预设、Fast 别名、原生确认取消、失败、未确认状态、模型锁定和离开聊天时的异步回调：
+按钮测试使用真实 React 和 jsdom，覆盖默认/自定义预设、Fast 别名、原生确认取消、失败、未确认状态、模型锁定和离开聊天时的异步回调：
 
 ```sh
 cd native-patch/tests
@@ -41,13 +68,13 @@ npm install
 npm test
 ```
 
-完整应用副本的安装/重复安装/卸载验证：
+完整应用副本的安装、旧版受限权限回归、自定义配置重装和卸载验证（还需 Node.js 与 rg）：
 
 ```sh
 ./native-patch/tests/integration.sh /Applications/ChatGPT.app
 ```
 
-测试只操作 `.build/integration/ChatGPT.app` 副本。发布前已通过编译、签名、ASAR 文件完整性和副本回滚检查；真实 Codex 聊天的按钮点击仍需用户安装后验收。
+测试只替换 `.build/integration/` 中的应用副本，原版备份写入上面的备份目录。验证编译、签名、受限权限拒绝、ASAR 内容完整性、自定义配置注入、保留框架签名和字节级恢复。系统进程加载检查通过挂起子进程完成，不执行 Codex 界面或聊天服务，不能证明完整界面启动成功。安装器配置界面和 12 项按钮测试通过；真实 Codex 聊天界面仍需安装后验收。自动恢复针对打不开或进程立即退出，不能识别存活进程的白屏。
 
 ---
 

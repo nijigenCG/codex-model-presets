@@ -30,3 +30,22 @@ rejects(source + source)
 let resources = try patch.replacements(archive)
 precondition(resources.count == 4)
 print("界面补丁范围、混淆变量改名、不兼容结构拒绝及入口资源验证通过。")
+
+for empty in ["", "{}", "{\"presets\":[]}", "{\"presets\":[{},{}]}", "{\"presets\":[{\"label\":\" \",\"model\":\"\"},{}]}"] {
+    let parsed = try PresetConfiguration.parse(Data(empty.utf8))
+    precondition(parsed == .defaults)
+}
+let custom = Data(#"{"presets":[{"label":"Astra","model":"gpt-6-astra","effort":"medium","speed":"standard"},{"label":"极速","model":"gpt-6-luna","effort":"max","speed":"fast"}]}"#.utf8)
+let configuration = try PresetConfiguration.parse(custom)
+precondition(configuration.presets[0] == ModelPreset(label: "Astra", model: "gpt-6-astra", effort: "medium", speed: "standard"))
+let decoded = try PresetConfiguration.parse(configuration.encoded())
+precondition(decoded == configuration)
+for invalid in ["[]", "{\"presets\":[{}]}", "{\"presets\":[{\"effort\":\"exhigh\"},{}]}", "{\"presets\":[{\"speed\":\"turbo\"},{}]}", "{\"presets\":[{\"model\":\"two words\"},{}]}", "{\"presets\":[{\"label\":1},{}]}"] {
+    do { _ = try PresetConfiguration.parse(Data(invalid.utf8)); preconditionFailure("必须拒绝无效配置") }
+    catch { precondition(error is PatchFailure) }
+}
+var configured = patch; configured.configuration = configuration
+let script = String(decoding: try configured.replacements(archive)["webview/codex-model-presets.js"]!, as: UTF8.self)
+precondition(script.hasPrefix("window.CodexModelPresetsConfig = "))
+precondition(script.contains("gpt-6-astra"))
+print("空配置和空字段默认值、自定义配置、JSON 往返、无效配置拒绝及配置注入验证通过。")

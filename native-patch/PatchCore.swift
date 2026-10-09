@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import AppKit
+import Darwin
 
 struct PatchFailure: LocalizedError {
     let message: String
@@ -10,7 +11,8 @@ struct PatchFailure: LocalizedError {
 
 func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
-func run(_ executable: String, _ arguments: [String]) throws {
+@discardableResult
+func run(_ executable: String, _ arguments: [String]) throws -> Data {
     let task = Process(), output = Pipe()
     task.executableURL = URL(fileURLWithPath: executable)
     task.arguments = arguments
@@ -21,6 +23,7 @@ func run(_ executable: String, _ arguments: [String]) throws {
     guard task.terminationStatus == 0 else {
         throw PatchFailure("\(URL(fileURLWithPath: executable).lastPathComponent) 失败：\(String(decoding: data, as: UTF8.self))")
     }
+    return data
 }
 
 struct Asar {
@@ -123,10 +126,11 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.0.0"
+    static let version = "1.1.0"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
+    var configuration = PresetConfiguration.defaults
 
     func info(_ app: URL) throws -> [String: Any] {
         let bytes = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
@@ -194,8 +198,11 @@ struct NativePatch {
         let html = String(decoding: try archive.read("webview/index.html"), as: UTF8.self)
         guard html.components(separatedBy: "</head>").count == 2, !html.contains("codex-model-presets.js") else { throw PatchFailure("页面入口无法识别或已有补丁。") }
         let injection = "<script src=\"./codex-model-presets.js\"></script><link rel=\"stylesheet\" href=\"./codex-model-presets.css\">\n</head>"
+        var script = Data("window.CodexModelPresetsConfig = ".utf8)
+        script.append(try configuration.encoded()); script.append(Data(";\n".utf8))
+        script.append(try Data(contentsOf: resources.appendingPathComponent("presets.js")))
         return [path: Data(patched.utf8), "webview/index.html": Data(html.replacingOccurrences(of: "</head>", with: injection).utf8),
-            "webview/codex-model-presets.js": try Data(contentsOf: resources.appendingPathComponent("presets.js")),
+            "webview/codex-model-presets.js": script,
             "webview/codex-model-presets.css": try Data(contentsOf: resources.appendingPathComponent("presets.css"))]
     }
 
@@ -222,39 +229,112 @@ struct NativePatch {
         let plist = try PropertyListSerialization.data(fromPropertyList: metadata, format: .xml, options: 0)
         try plist.write(to: copy.appendingPathComponent("Contents/Info.plist"), options: .atomic)
         let marker: [String: Any] = ["patchVersion": Self.version, "appVersion": metadata["CFBundleShortVersionString"] ?? "",
-            "originalHeaderHash": archive.headerHash, "patchedHeaderHash": hash, "backupPath": backup.path]
+            "originalHeaderHash": archive.headerHash, "patchedHeaderHash": hash, "backupPath": backup.path,
+            "configurationHash": sha256(try configuration.encoded())]
         try JSONSerialization.data(withJSONObject: marker, options: [.prettyPrinted, .sortedKeys]).write(to: copy.appendingPathComponent(Self.markerPath))
-        try run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--preserve-metadata=entitlements,flags,runtime", copy.path])
+        try signLocally(copy)
         try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path])
+        try verifyLocalLaunch(copy)
+    }
+
+    private static func requiresVendorSignature(_ key: String) -> Bool {
+        key.hasPrefix("com.apple.developer.") ||
+            ["com.apple.application-identifier", "com.apple.security.application-groups", "keychain-access-groups"].contains(key)
+    }
+
+    private func signingInfo(_ app: URL) throws -> (entitlements: [String: Any], adHoc: Bool) {
+        let output = String(decoding: try run("/usr/bin/codesign", ["-d", "--verbose=2", "--entitlements", ":-", app.path]), as: UTF8.self)
+        guard let start = output.range(of: "<?xml"), let end = output.range(of: "</plist>"),
+              let entitlements = try PropertyListSerialization.propertyList(from: Data(output[start.lowerBound..<end.upperBound].utf8), format: nil) as? [String: Any] else {
+            throw PatchFailure("无法读取应用运行权限。")
+        }
+        return (entitlements, output.contains("Signature=adhoc"))
+    }
+
+    private func signLocally(_ app: URL) throws {
+        var entitlements = try signingInfo(app).entitlements
+        // These claims require the vendor's certificate/provisioning profile.
+        for key in entitlements.keys.filter(Self.requiresVendorSignature) {
+            entitlements.removeValue(forKey: key)
+        }
+        // Keep nested OpenAI-signed frameworks/helpers intact. The local main
+        // executable needs this entitlement to load a different signing team.
+        entitlements["com.apple.security.cs.disable-library-validation"] = true
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("codex-preset-entitlements-\(UUID().uuidString).plist")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0).write(to: file)
+        try run("/usr/bin/codesign", ["--force", "--sign", "-", "--entitlements", file.path, "--preserve-metadata=flags,runtime", app.path])
+    }
+
+    func verifyLocalLaunch(_ app: URL) throws {
+        let signature = try signingInfo(app)
+        // A cold AMFI check may finish after the suspended probe. Reject known
+        // incompatible entitlements directly instead of depending on its timing.
+        if signature.adHoc {
+            guard !signature.entitlements.keys.contains(where: Self.requiresVendorSignature) else {
+                throw PatchFailure("本地签名含厂商受限权限，系统会拒绝启动。原应用未被替换。")
+            }
+            guard signature.entitlements["com.apple.security.cs.disable-library-validation"] as? Bool == true else {
+                throw PatchFailure("本地签名缺少加载官方框架所需的权限。原应用未被替换。")
+            }
+        }
+        guard let executable = try info(app)["CFBundleExecutable"] as? String, !executable.contains("/") else { throw PatchFailure("应用启动入口无效。") }
+        // AMFI still validates a suspended spawn. No application code, UI or
+        // app-server executes; restricted ad-hoc entitlements cause SIGKILL.
+        let path = app.appendingPathComponent("Contents/MacOS/\(executable)").path
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_START_SUSPENDED))
+        let argument = strdup(path)!
+        defer { free(argument) }
+        var arguments: [UnsafeMutablePointer<CChar>?] = [argument, nil]
+        var pid: pid_t = 0
+        let result = path.withCString { executable in
+            arguments.withUnsafeMutableBufferPointer { argv in
+                posix_spawn(&pid, executable, nil, &attributes, argv.baseAddress!, environ)
+            }
+        }
+        guard result == 0 else { throw PatchFailure("系统启动许可检查失败：\(String(cString: strerror(result)))") }
+        Thread.sleep(forTimeInterval: 0.5)
+        var status: Int32 = 0
+        let waited = waitpid(pid, &status, WNOHANG)
+        if waited == 0 {
+            kill(pid, SIGKILL)
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+        } else {
+            throw PatchFailure("系统拒绝启动补丁应用（进程状态 \(status)）。原应用未被替换。")
+        }
     }
 
     func install(_ app: URL, closeApp: Bool = true) throws -> String {
         if !closeApp { try requireStopped(app) }
-        let status = try check(app)
-        guard try marker(app) == nil else { return status }
+        _ = try check(app)
+        try configuration.validate()
         let fm = FileManager.default, version = try info(app)["CFBundleShortVersionString"] as? String ?? "unknown"
-        let backup = Self.backupRoot.appendingPathComponent("\(version)-\(UUID().uuidString)/\(app.lastPathComponent)")
-        try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try run("/usr/bin/ditto", [app.path, backup.path])
-        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
+        let expectedHash = try Asar(app.appendingPathComponent("Contents/Resources/app.asar")).headerHash
+        let backup: URL
+        if let installed = try marker(app) { backup = try originalBackup(installed) }
+        else {
+            backup = Self.backupRoot.appendingPathComponent("\(version)-\(UUID().uuidString)/\(app.lastPathComponent)")
+            try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try run("/usr/bin/ditto", [app.path, backup.path])
+            try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
+        }
         let stage = app.deletingLastPathComponent().appendingPathComponent(".codex-presets-\(UUID().uuidString).app")
         defer { try? fm.removeItem(at: stage) }
         try prepare(backup, to: stage, backup: backup)
         if closeApp { try stop(app) }
-        guard try Asar(app.appendingPathComponent("Contents/Resources/app.asar")).headerHash == Asar(backup.appendingPathComponent("Contents/Resources/app.asar")).headerHash else { throw PatchFailure("应用在安装期间更新了，已取消替换。") }
+        guard try Asar(app.appendingPathComponent("Contents/Resources/app.asar")).headerHash == expectedHash else { throw PatchFailure("应用在安装期间更新了，已取消替换。") }
         try swap(stage, app)
-        return "安装完成。Sol 和 Luna 按钮将在重启 Codex 后显示。"
+        return "安装完成，系统启动许可检查通过。\(configuration.presets.map(\.label).joined(separator: " 和 ")) 按钮将在重启 Codex 后显示。"
     }
 
     func restore(_ app: URL, closeApp: Bool = true) throws -> String {
         if !closeApp { try requireStopped(app) }
         _ = try check(app)
-        guard let marker = try marker(app), let path = marker["backupPath"] as? String else { throw PatchFailure("当前应用没有安装此补丁。") }
-        let backup = URL(fileURLWithPath: path).standardizedFileURL
-        guard backup.path.hasPrefix(Self.backupRoot.path + "/"),
-              try info(backup)["CFBundleShortVersionString"] as? String == marker["appVersion"] as? String,
-              try Asar(backup.appendingPathComponent("Contents/Resources/app.asar")).headerHash == marker["originalHeaderHash"] as? String else { throw PatchFailure("找不到匹配的原版备份。") }
-        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
+        guard let marker = try marker(app) else { throw PatchFailure("当前应用没有安装此补丁。") }
+        let backup = try originalBackup(marker)
         let stage = app.deletingLastPathComponent().appendingPathComponent(".codex-restore-\(UUID().uuidString).app")
         defer { try? FileManager.default.removeItem(at: stage) }
         try run("/usr/bin/ditto", [backup.path, stage.path])
@@ -264,6 +344,16 @@ struct NativePatch {
         }
         try swap(stage, app)
         return "已恢复官方原版应用。"
+    }
+
+    private func originalBackup(_ marker: [String: Any]) throws -> URL {
+        guard let path = marker["backupPath"] as? String else { throw PatchFailure("补丁没有原版备份记录。") }
+        let backup = URL(fileURLWithPath: path).standardizedFileURL
+        guard backup.path.hasPrefix(Self.backupRoot.path + "/"),
+              try info(backup)["CFBundleShortVersionString"] as? String == marker["appVersion"] as? String,
+              try Asar(backup.appendingPathComponent("Contents/Resources/app.asar")).headerHash == marker["originalHeaderHash"] as? String else { throw PatchFailure("找不到匹配的原版备份。") }
+        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
+        return backup
     }
 
     private func stop(_ app: URL) throws {

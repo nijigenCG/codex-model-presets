@@ -1,0 +1,17 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const crypto = require("node:crypto");
+const [app, configurationPath] = process.argv.slice(2);
+const archive = fs.readFileSync(`${app}/Contents/Resources/app.asar`);
+const header = JSON.parse(archive.subarray(16, 16 + archive.readUInt32LE(12)));
+const file = header.files.webview.files["codex-model-presets.js"];
+const start = 8 + archive.readUInt32LE(4) + Number(file.offset);
+const script = archive.subarray(start, start + file.size);
+assert.equal(crypto.createHash("sha256").update(script).digest("hex"), file.integrity.hash);
+const context = { window: {} };
+vm.runInNewContext(script.toString(), context);
+const expected = JSON.parse(fs.readFileSync(configurationPath));
+assert.deepEqual(JSON.parse(JSON.stringify(context.window.CodexModelPresetsConfig)), expected);
+assert.equal(typeof context.window.CodexModelPresets.render, "function");
+console.log("已安装 ASAR 的自定义配置、脚本解析和内容完整性验证通过。");

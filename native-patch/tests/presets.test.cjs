@@ -8,11 +8,13 @@ const { createRoot } = require("react-dom/client");
 const dom = new JSDOM("<div id='root'></div>", { runScripts: "outside-only" });
 global.window = dom.window; global.document = window.document;
 global.IS_REACT_ACT_ENVIRONMENT = true;
-window.eval(readFileSync(require.resolve("../presets.js"), "utf8"));
+const source = readFileSync(require.resolve("../presets.js"), "utf8");
 let root;
 afterEach(async () => { if (root) await React.act(() => root.unmount()); root = null; });
 
-async function setup(overrides = {}) {
+async function setup(overrides = {}, configuration) {
+  window.CodexModelPresetsConfig = configuration;
+  window.eval(source);
   const calls = [];
   let state = {
     conversationId: "current-chat", model: "gpt-6.1-sol", effort: "medium", tier: null, disabled: false,
@@ -45,6 +47,31 @@ test("Luna commits current-chat model, Max, Fast and then closes/focuses", async
 test("Sol clears Fast and applies XHigh", async () => {
   const h = await setup({ model: "gpt-6-luna", effort: "max", tier: "priority" }); await h.click("Sol");
   assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh", null], ["tier", null], ["close-and-focus"]]);
+});
+test("configured labels, model, effort and Standard reach native callbacks", async () => {
+  const configuration = { presets: [
+    { label: "Astra", model: "gpt-6-astra", effort: "medium", speed: "standard" },
+    { label: "极速", model: "gpt-6-luna", effort: "max", speed: "fast" },
+  ] };
+  const h = await setup({
+    tier: "priority",
+    models: [{ model: "gpt-6-astra", supportedReasoningEfforts: [{ reasoningEffort: "medium" }] },
+      { model: "gpt-6-luna", supportedReasoningEfforts: [{ reasoningEffort: "max" }] }],
+    options: [{ model: { model: "gpt-6-astra" } }, { model: { model: "gpt-6-luna" } }],
+  }, configuration);
+  assert.equal(document.querySelectorAll("button").length, 2);
+  assert.ok(h.button("极速"));
+  await h.click("Astra");
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-astra", "medium", null], ["tier", null], ["close-and-focus"]]);
+  assert.equal(h.button("Astra").getAttribute("aria-pressed"), "true");
+});
+test("configured Fast can apply to the first button", async () => {
+  const h = await setup({}, { presets: [
+    { label: "快 Sol", model: "gpt-6.1-sol", effort: "xhigh", speed: "fast" },
+    { label: "标准 Luna", model: "gpt-6-luna", effort: "max", speed: "standard" },
+  ] });
+  await h.click("快 Sol");
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh", "priority"], ["tier", "priority"], ["close-and-focus"]]);
 });
 test("Fast uses the native catalog's concrete tier id", async () => {
   const h = await setup({ tiers: [{ value: null }, { value: "fast", iconKind: "fast" }] }); await h.click("Luna");

@@ -1,9 +1,10 @@
 /* Local UI patch. No network calls or simulated input. */
 (() => {
-  const presets = [
-    { label: "Sol", model: "gpt-6.1-sol", effort: "xhigh", tier: null, title: "GPT-6.1 Sol · XHigh · Standard" },
-    { label: "Luna", model: "gpt-6-luna", effort: "max", tier: "priority", title: "GPT-6 Luna · Max · Fast" },
+  const defaults = [
+    { label: "Sol", model: "gpt-6.1-sol", effort: "xhigh", speed: "standard" },
+    { label: "Luna", model: "gpt-6-luna", effort: "max", speed: "fast" },
   ];
+  const presets = (window.CodexModelPresetsConfig?.presets ?? defaults).map((p, id) => ({ ...p, id, tier: p.speed === "fast" ? "priority" : null }));
   const speed = tier => tier === "priority" || tier === "fast" ? "fast" : tier ?? null;
   const matches = (p, preset) => p.model === preset.model && p.effort === preset.effort && speed(p.tier) === speed(preset.tier);
 
@@ -66,11 +67,11 @@
           const tierAllowed = preset.tier === null || settings.tiers?.some(t => t.value === preset.tier);
           const disabled = settings.disabled || !!pending || !model || !supported || !option || option.disabledReason != null || !tierAllowed;
           return jsx.jsx("button", {
-            type: "button", disabled, title: error || preset.title,
-            "aria-label": preset.title, "aria-pressed": matches(settings, preset),
+            type: "button", disabled, title: error || `${model?.displayName ?? preset.model} · ${preset.effort} · ${preset.speed === "fast" ? "Fast" : "Standard"}`,
+            "aria-label": `${preset.label}：${preset.model} · ${preset.effort} · ${preset.speed}`, "aria-pressed": matches(settings, preset),
             onClick: () => select(preset),
-            children: pending?.preset.label === preset.label ? `${preset.label}…` : preset.label,
-          }, preset.label);
+            children: pending?.preset.id === preset.id ? `${preset.label}…` : preset.label,
+          }, String(preset.id));
         }),
         error ? jsx.jsx("span", { role: "alert", className: "codex-model-presets-error", children: error }) : null,
       ],
