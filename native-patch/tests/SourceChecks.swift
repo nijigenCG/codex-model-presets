@@ -21,6 +21,12 @@ let renamed = source.replacingOccurrences(of: "\\b\(NSRegularExpression.escapedP
                     .replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: jsxName))\\b", with: "RenamedJSX", options: .regularExpression)
 let renamedPatch = try patch.patchSource(renamed)
 precondition(renamedPatch.contains("render(RenamedJSX,RenamedReact,"))
+let applyPattern = try NSRegularExpression(pattern: #"apply:\(model,effort,tier\)=>([A-Za-z_$][A-Za-z0-9_$]*)\(model,effort,"#)
+let applyMatch = applyPattern.firstMatch(in: patched, range: NSRange(patched.startIndex..., in: patched))!
+let applyName = String(patched[Range(applyMatch.range(at: 1), in: patched)!])
+let renamedHandler = source.replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: applyName))\\b", with: "RenamedNativeBridge", options: .regularExpression)
+let renamedHandlerPatch = try patch.patchSource(renamedHandler)
+precondition(renamedHandlerPatch.contains("apply:(model,effort,tier)=>RenamedNativeBridge(model,effort,"))
 func rejects(_ input: String) {
     do { _ = try patch.patchSource(input); preconditionFailure("必须拒绝不兼容或不唯一的界面结构") }
     catch { precondition(error is PatchFailure) }
@@ -30,6 +36,9 @@ rejects(source + source)
 let resources = try patch.replacements(archive)
 precondition(resources.count == 4)
 print("界面补丁范围、混淆变量改名、不兼容结构拒绝及入口资源验证通过。")
+if CommandLine.arguments.count == 4 {
+    try Data(patched.utf8).write(to: URL(fileURLWithPath: CommandLine.arguments[3]))
+}
 
 for empty in ["", "{}", "{\"presets\":[]}", "{\"presets\":[{},{}]}", "{\"presets\":[{\"label\":\" \",\"model\":\"\"},{}]}"] {
     let parsed = try PresetConfiguration.parse(Data(empty.utf8))

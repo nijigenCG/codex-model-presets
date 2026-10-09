@@ -126,7 +126,7 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.1.0"
+    static let version = "1.1.1"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
@@ -148,11 +148,13 @@ struct NativePatch {
 
     func patchSource(_ source: String) throws -> String {
         let id = "[A-Za-z_$][A-Za-z0-9_$]*"
-        func unique(_ pattern: String, in text: String) throws -> [String] {
+        func unique(_ pattern: String, in text: String, part: String = "界面") throws -> [String] {
             let regex = try NSRegularExpression(pattern: pattern)
             let range = NSRange(text.startIndex..., in: text), matches = regex.matches(in: text, range: range)
-            guard matches.count == 1, let match = matches.first else { throw PatchFailure("此 Codex 版本的界面结构不受支持，原应用未修改。") }
-            return (0..<match.numberOfRanges).map { String(text[Range(match.range(at: $0), in: text)!]) }
+            guard matches.count == 1, let match = matches.first else { throw PatchFailure("此 Codex 版本的\(part)结构不受支持（匹配 \(matches.count) 处），原应用未修改。") }
+            return (0..<match.numberOfRanges).map { index in
+                Range(match.range(at: index), in: text).map { String(text[$0]) } ?? ""
+            }
         }
         let start = try unique("function (\(id))\\(e\\)\\{let \(id)=\\(0,\(id)\\.c\\)\\(\\d+\\),\\{serviceTierDefaults:(\(id)),conversationId:(\(id)),hideLabel:", in: source)[0]
         let bodyStart = source.range(of: start)!.lowerBound
@@ -163,7 +165,18 @@ struct NativePatch {
         let body = String(suffix[..<endRange.upperBound])
         let native = try unique("\\{modelSettings:(\(id)),selectComposerModelAndReasoningEffort:(\(id)),setDefaultModelAndReasoningEffort:\(id),setModelAndReasoningEffort:\(id)\\}", in: body)
         let tier = try unique("\\{serviceTierSettings:(\(id)),setServiceTier:(\(id))\\}", in: body)
-        let agent = try unique("\\((\(id))\\?\\.selectModelAndReasoningEffort\\?\\?\(native[2])\\)", in: body)[1]
+        let selector = NSRegularExpression.escapedPattern(for: native[2])
+        // Older builds coalesce the agent method with the guarded selector.
+        // Newer builds use a local function that also normalizes model IDs and
+        // returns the guarded result; use it rather than the void UI callback.
+        let dispatch = try unique(
+            "\\((\(id))\\?\\.selectModelAndReasoningEffort\\?\\?\(selector)\\)|" +
+            "(\(id))=function\\((\(id)),(\(id)),(\(id))\\)\\{let (\(id))=\\(\\)=>\\{[^;]+\\};return (\(id))==null\\?\(selector)\\((\(id))\\(\\3\\),\\4,\\6,\\5\\):\\7\\.selectModelAndReasoningEffort\\(\\8\\(\\3\\),\\4,\\6\\)\\}",
+            in: body, part: "模型分派")
+        let agent = dispatch[1].isEmpty ? dispatch[7] : dispatch[1]
+        let apply = dispatch[2].isEmpty
+            ? "(model,effort,tier)=>\(native[2])(model,effort,()=>{}, {serviceTier:tier})"
+            : "(model,effort,tier)=>\(dispatch[2])(model,effort,{serviceTier:tier})"
         let reactRegex = try NSRegularExpression(pattern: "\\(0,(\(id))\\.useRef\\)")
         let runtimeNames = Set(reactRegex.matches(in: body, range: NSRange(body.startIndex..., in: body)).map { String(body[Range($0.range(at: 1), in: body)!]) })
         guard runtimeNames.count == 1, let reactName = runtimeNames.first else { throw PatchFailure("React 入口无法识别。") }
@@ -177,7 +190,7 @@ struct NativePatch {
             "onBeforeSelectModel": try prop("onBeforeSelectModel"), "onSelectModelOption": try prop("onSelectModelOption"),
             "onComplete": try prop("onSelectComplete"), "setTier": tier[2],
             "disabled": "\(props[2])||\(try prop("modelOptionsDisabled"))||\(try prop("reasoningEffortDisabled"))||\(try prop("serviceTierOptionsLoading"))||\(agent)?.isAeon===!0",
-            "apply": "(model,effort,tier)=>\(native[2])(model,effort,()=>{}, {serviceTier:tier})",
+            "apply": apply,
         ]
         let expression = "(window.CodexModelPresets?.render(\(props[1]),\(reactName),\(original),{\(fields.keys.sorted().map { "\($0):\(fields[$0]!)" }.joined(separator: ","))})??\(original))"
         let tail = String(suffix[endRange])

@@ -9,7 +9,8 @@ mkdir -p "$project_dir/.build/integration"
 mkdir -p "$project_dir/.build/source-check"
 cp "$project_dir/native-patch/tests/SourceChecks.swift" "$project_dir/.build/source-check/main.swift"
 xcrun swiftc "$project_dir/native-patch/Configuration.swift" "$project_dir/native-patch/PatchCore.swift" "$project_dir/.build/source-check/main.swift" -o "$project_dir/.build/source-check/check"
-"$project_dir/.build/source-check/check" "$original" "$project_dir/native-patch"
+"$project_dir/.build/source-check/check" "$original" "$project_dir/native-patch" "$project_dir/.build/source-check/patched.mjs"
+node --check "$project_dir/.build/source-check/patched.mjs"
 if [[ -e "$test_app" || -e "$rejected_app" ]]; then
   print -u2 '测试副本已存在，请另行移走 .build/integration 中的应用副本后重试。'
   exit 1
