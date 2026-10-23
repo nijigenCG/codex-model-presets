@@ -161,7 +161,7 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.1.3"
+    static let version = "1.2.0"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
