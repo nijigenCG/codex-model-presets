@@ -42,7 +42,7 @@
       setPending({ preset, committed: false });
       try {
         p.onSelectModelOption();
-        const selected = await p.apply(preset.model, preset.effort, preset.tier);
+        const selected = await p.apply(preset.model, preset.effort);
         if (selected !== true) throw new Error("模型切换失败或被取消。");
         if (!mounted.current) return;
         // Codex may queue a model change for the next turn while a reply runs.

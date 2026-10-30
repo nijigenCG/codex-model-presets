@@ -161,7 +161,7 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.2.1"
+    static let version = "1.2.2"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
@@ -211,9 +211,11 @@ struct NativePatch {
             in: body, part: "模型分派")
         let agent = [dispatch[1], dispatch[7], dispatch[14]].first { !$0.isEmpty }!
         let bridge = dispatch[2].isEmpty ? dispatch[9] : dispatch[2]
+        // The native menu changes speed separately. Bundling a tier here makes
+        // new-chat drafts fail with "No conversation available for model preset update".
         let apply = bridge.isEmpty
-            ? "(model,effort,tier)=>\(native[2])(model,effort,()=>{}, {serviceTier:tier})"
-            : "(model,effort,tier)=>\(bridge)(model,effort,{serviceTier:tier})"
+            ? "(model,effort)=>\(native[2])(model,effort,()=>{})"
+            : "(model,effort)=>\(bridge)(model,effort)"
         let reactRegex = try NSRegularExpression(pattern: "\\(0,(\(id))\\.useRef\\)")
         let runtimeNames = Set(reactRegex.matches(in: body, range: NSRange(body.startIndex..., in: body)).map { String(body[Range($0.range(at: 1), in: body)!]) })
         guard runtimeNames.count == 1, let reactName = runtimeNames.first else { throw PatchFailure("React 入口无法识别。") }

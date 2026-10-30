@@ -43,12 +43,12 @@ let renamed = source.replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpr
                     .replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpression.escapedPattern(for: jsxName))(?![A-Za-z0-9_$])", with: "RenamedJSX", options: .regularExpression)
 let renamedPatch = try patch.patchSource(renamed)
 precondition(renamedPatch.contains("render(RenamedJSX,RenamedReact,"))
-let applyPattern = try NSRegularExpression(pattern: #"apply:\(model,effort,tier\)=>([A-Za-z_$][A-Za-z0-9_$]*)\(model,effort,"#)
+let applyPattern = try NSRegularExpression(pattern: #"apply:\(model,effort\)=>([A-Za-z_$][A-Za-z0-9_$]*)\(model,effort[,)]"#)
 let applyMatch = applyPattern.firstMatch(in: patched, range: NSRange(patched.startIndex..., in: patched))!
 let applyName = String(patched[Range(applyMatch.range(at: 1), in: patched)!])
 let renamedHandler = source.replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpression.escapedPattern(for: applyName))(?![A-Za-z0-9_$])", with: "RenamedNativeBridge", options: .regularExpression)
 let renamedHandlerPatch = try patch.patchSource(renamedHandler)
-precondition(renamedHandlerPatch.contains("apply:(model,effort,tier)=>RenamedNativeBridge(model,effort,"))
+precondition(renamedHandlerPatch.contains("apply:(model,effort)=>RenamedNativeBridge(model,effort"))
 func rejects(_ input: String) {
     do { _ = try patch.patchSource(input); preconditionFailure("必须拒绝不兼容或不唯一的界面结构") }
     catch { precondition(error is PatchFailure) }

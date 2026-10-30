@@ -25,7 +25,7 @@ async function setup(overrides = {}, configuration) {
     onBeforeSelectModel: () => true,
     onSelectModelOption: () => calls.push(["explicit"]),
     onComplete: () => calls.push(["close-and-focus"]),
-    apply: async (model, effort, tier) => { calls.push(["apply", model, effort, tier]); update({ model, effort }); return true; },
+    apply: async (model, effort) => { calls.push(["apply", model, effort]); update({ model, effort }); return true; },
     setTier: async tier => { calls.push(["tier", tier]); update({ tier }); return true; },
     ...overrides,
   };
@@ -40,13 +40,24 @@ async function setup(overrides = {}, configuration) {
 
 test("Luna commits current-chat model, Max, Fast and then closes/focuses", async () => {
   const h = await setup(); await h.click("Luna");
-  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-luna", "max", "priority"], ["tier", "priority"], ["close-and-focus"]]);
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-luna", "max"], ["tier", "priority"], ["close-and-focus"]]);
   assert.equal(h.button("Luna").getAttribute("aria-pressed"), "true");
   assert.equal(document.querySelectorAll("button").length, 2);
 });
 test("Sol clears Fast and applies XHigh", async () => {
   const h = await setup({ model: "gpt-6-luna", effort: "max", tier: "priority" }); await h.click("Sol");
-  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh", null], ["tier", null], ["close-and-focus"]]);
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh"], ["tier", null], ["close-and-focus"]]);
+});
+test("new-chat draft selects model without a bundled tier, then sets Fast and focuses", async () => {
+  const h = await setup({ conversationId: null, apply: async (...args) => {
+    assert.equal(args.length, 2, "draft model setter must not receive a service tier");
+    h.calls.push(["apply", ...args]);
+    h.update({ model: args[0], effort: args[1] });
+    return true;
+  } });
+  await h.click("Luna");
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-luna", "max"], ["tier", "priority"], ["close-and-focus"]]);
+  assert.equal(h.button("Luna").getAttribute("aria-pressed"), "true");
 });
 test("configured labels, model, effort and Standard reach native callbacks", async () => {
   const configuration = { presets: [
@@ -62,7 +73,7 @@ test("configured labels, model, effort and Standard reach native callbacks", asy
   assert.equal(document.querySelectorAll("button").length, 2);
   assert.ok(h.button("极速"));
   await h.click("Astra");
-  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-astra", "medium", null], ["tier", null], ["close-and-focus"]]);
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6-astra", "medium"], ["tier", null], ["close-and-focus"]]);
   assert.equal(h.button("Astra").getAttribute("aria-pressed"), "true");
 });
 test("configured Fast can apply to the first button", async () => {
@@ -71,11 +82,11 @@ test("configured Fast can apply to the first button", async () => {
     { label: "标准 Luna", model: "gpt-6-luna", effort: "max", speed: "standard" },
   ] });
   await h.click("快 Sol");
-  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh", "priority"], ["tier", "priority"], ["close-and-focus"]]);
+  assert.deepEqual(h.calls, [["explicit"], ["apply", "gpt-6.1-sol", "xhigh"], ["tier", "priority"], ["close-and-focus"]]);
 });
 test("Fast uses the native catalog's concrete tier id", async () => {
   const h = await setup({ tiers: [{ value: null }, { value: "fast", iconKind: "fast" }] }); await h.click("Luna");
-  assert.equal(h.calls[1][3], "fast");
+  assert.deepEqual(h.calls[2], ["tier", "fast"]);
   assert.equal(h.button("Luna").getAttribute("aria-pressed"), "true");
 });
 test("matching preset only closes the picker and restores focus", async () => {
