@@ -161,7 +161,7 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.2.0"
+    static let version = "1.2.1"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
@@ -202,16 +202,18 @@ struct NativePatch {
         let tier = try unique("\\{serviceTierSettings:(\(id)),setServiceTier:(\(id))\\}", in: body)
         let selector = NSRegularExpression.escapedPattern(for: native[2])
         // Older builds coalesce the agent method with the guarded selector.
-        // Newer builds use a local function that also normalizes model IDs and
-        // returns the guarded result; use it rather than the void UI callback.
+        // Newer builds normalize model IDs and branch on isAeon. Preserve that
+        // local function and its guarded result rather than the void UI callback.
         let dispatch = try unique(
             "\\((\(id))\\?\\.selectModelAndReasoningEffort\\?\\?\(selector)\\)|" +
-            "(\(id))=function\\((\(id)),(\(id)),(\(id))\\)\\{let (\(id))=\\(\\)=>\\{[^;]+\\};return (\(id))==null\\?\(selector)\\((\(id))\\(\\3\\),\\4,\\6,\\5\\):\\7\\.selectModelAndReasoningEffort\\(\\8\\(\\3\\),\\4,\\6\\)\\}",
+            "(\(id))=function\\((\(id)),(\(id)),(\(id))\\)\\{let (\(id))=\\(\\)=>\\{[^;]+\\};return (\(id))==null\\?\(selector)\\((\(id))\\(\\3\\),\\4,\\6,\\5\\):\\7\\.selectModelAndReasoningEffort\\(\\8\\(\\3\\),\\4,\\6\\)\\}|" +
+            "(\(id))=function\\((\(id)),(\(id)),(\(id))\\)\\{let (\(id))=\\(\\)=>\\{[^;]+\\};return (\(id))\\?\\.isAeon\\?\\14\\.selectModelAndReasoningEffort\\((\(id))\\(\\10\\),\\11,\\13\\):\(selector)\\(\\15\\(\\10\\),\\11,\\13,\\12\\)\\}",
             in: body, part: "模型分派")
-        let agent = dispatch[1].isEmpty ? dispatch[7] : dispatch[1]
-        let apply = dispatch[2].isEmpty
+        let agent = [dispatch[1], dispatch[7], dispatch[14]].first { !$0.isEmpty }!
+        let bridge = dispatch[2].isEmpty ? dispatch[9] : dispatch[2]
+        let apply = bridge.isEmpty
             ? "(model,effort,tier)=>\(native[2])(model,effort,()=>{}, {serviceTier:tier})"
-            : "(model,effort,tier)=>\(dispatch[2])(model,effort,{serviceTier:tier})"
+            : "(model,effort,tier)=>\(bridge)(model,effort,{serviceTier:tier})"
         let reactRegex = try NSRegularExpression(pattern: "\\(0,(\(id))\\.useRef\\)")
         let runtimeNames = Set(reactRegex.matches(in: body, range: NSRange(body.startIndex..., in: body)).map { String(body[Range($0.range(at: 1), in: body)!]) })
         guard runtimeNames.count == 1, let reactName = runtimeNames.first else { throw PatchFailure("React 入口无法识别。") }

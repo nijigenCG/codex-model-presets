@@ -39,14 +39,14 @@ let runtime = try NSRegularExpression(pattern: #"CodexModelPresets\?\.render\(([
 let bindings = runtime.firstMatch(in: patched, range: NSRange(patched.startIndex..., in: patched))!
 let jsxName = String(patched[Range(bindings.range(at: 1), in: patched)!])
 let reactName = String(patched[Range(bindings.range(at: 2), in: patched)!])
-let renamed = source.replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: reactName))\\b", with: "RenamedReact", options: .regularExpression)
-                    .replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: jsxName))\\b", with: "RenamedJSX", options: .regularExpression)
+let renamed = source.replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpression.escapedPattern(for: reactName))(?![A-Za-z0-9_$])", with: "RenamedReact", options: .regularExpression)
+                    .replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpression.escapedPattern(for: jsxName))(?![A-Za-z0-9_$])", with: "RenamedJSX", options: .regularExpression)
 let renamedPatch = try patch.patchSource(renamed)
 precondition(renamedPatch.contains("render(RenamedJSX,RenamedReact,"))
 let applyPattern = try NSRegularExpression(pattern: #"apply:\(model,effort,tier\)=>([A-Za-z_$][A-Za-z0-9_$]*)\(model,effort,"#)
 let applyMatch = applyPattern.firstMatch(in: patched, range: NSRange(patched.startIndex..., in: patched))!
 let applyName = String(patched[Range(applyMatch.range(at: 1), in: patched)!])
-let renamedHandler = source.replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: applyName))\\b", with: "RenamedNativeBridge", options: .regularExpression)
+let renamedHandler = source.replacingOccurrences(of: "(?<![A-Za-z0-9_$])\(NSRegularExpression.escapedPattern(for: applyName))(?![A-Za-z0-9_$])", with: "RenamedNativeBridge", options: .regularExpression)
 let renamedHandlerPatch = try patch.patchSource(renamedHandler)
 precondition(renamedHandlerPatch.contains("apply:(model,effort,tier)=>RenamedNativeBridge(model,effort,"))
 func rejects(_ input: String) {
@@ -71,7 +71,12 @@ let configuration = try PresetConfiguration.parse(custom)
 precondition(configuration.presets[0] == ModelPreset(label: "Astra", model: "gpt-6-astra", effort: "medium", speed: "standard"))
 let decoded = try PresetConfiguration.parse(configuration.encoded())
 precondition(decoded == configuration)
-for invalid in ["[]", "{\"presets\":[{}]}", "{\"presets\":[{\"effort\":\"exhigh\"},{}]}", "{\"presets\":[{\"speed\":\"turbo\"},{}]}", "{\"presets\":[{\"model\":\"two words\"},{}]}", "{\"presets\":[{\"label\":1},{}]}"] {
+for count in [1, 4] {
+    let dynamic = PresetConfiguration(presets: Array(repeating: configuration.presets[0], count: count))
+    let parsed = try PresetConfiguration.parse(dynamic.encoded())
+    precondition(parsed == dynamic)
+}
+for invalid in ["[]", "{\"presets\":[{},{},{},{},{}]}", "{\"presets\":[{},{},{}]}", "{\"presets\":[{\"effort\":\"exhigh\"},{}]}", "{\"presets\":[{\"speed\":\"turbo\"},{}]}", "{\"presets\":[{\"model\":\"two words\"},{}]}", "{\"presets\":[{\"label\":1},{}]}"] {
     do { _ = try PresetConfiguration.parse(Data(invalid.utf8)); preconditionFailure("必须拒绝无效配置") }
     catch { precondition(error is PatchFailure) }
 }
