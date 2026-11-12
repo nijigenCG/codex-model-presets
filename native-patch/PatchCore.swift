@@ -161,10 +161,11 @@ struct Asar {
 }
 
 struct NativePatch {
-    static let version = "1.2.2"
+    static let version = "1.2.3"
     static let markerPath = "Contents/Resources/codex-model-presets-patch.json"
     static let backupRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codex Model Presets Patch/Backups", isDirectory: true)
     let resources: URL
+    var backupDirectory = Self.backupRoot
     var configuration = PresetConfiguration.defaults
 
     func info(_ app: URL) throws -> [String: Any] {
@@ -389,23 +390,30 @@ struct NativePatch {
         if !closeApp { try requireStopped(app) }
         _ = try check(app)
         try configuration.validate()
-        let fm = FileManager.default, version = try info(app)["CFBundleShortVersionString"] as? String ?? "unknown"
+        let fm = FileManager.default
         let expectedHash = try Asar(app.appendingPathComponent("Contents/Resources/app.asar")).headerHash
-        let backup: URL
-        if let installed = try marker(app) { backup = try originalBackup(installed) }
-        else {
-            backup = Self.backupRoot.appendingPathComponent("\(version)-\(UUID().uuidString)/\(app.lastPathComponent)")
+        let original = try marker(app).map { try originalBackup($0) } ?? app
+        let originalHash = try Asar(original.appendingPathComponent("Contents/Resources/app.asar")).headerHash
+        let backup = backupDirectory.appendingPathComponent("\(backupPrefix(app))\(originalHash)/\(app.lastPathComponent)")
+        let created = !fm.fileExists(atPath: backup.path)
+        var committed = false
+        defer { if created && !committed { try? fm.removeItem(at: backup.deletingLastPathComponent()) } }
+        if created {
             try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try run("/usr/bin/ditto", [app.path, backup.path])
-            try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
+            try run("/usr/bin/ditto", [original.path, backup.path])
         }
+        guard try Asar(backup.appendingPathComponent("Contents/Resources/app.asar")).headerHash == originalHash else { throw PatchFailure("原版备份校验失败。") }
+        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])
         let stage = app.deletingLastPathComponent().appendingPathComponent(".codex-presets-\(UUID().uuidString).app")
         defer { try? fm.removeItem(at: stage) }
         try prepare(backup, to: stage, backup: backup)
         if closeApp { try stop(app) }
         guard try Asar(app.appendingPathComponent("Contents/Resources/app.asar")).headerHash == expectedHash else { throw PatchFailure("应用在安装期间更新了，已取消替换。") }
         try swap(stage, app)
-        return "安装完成，系统启动许可检查通过。\(configuration.presets.map(\.label).joined(separator: " 和 ")) 按钮将在重启 Codex 后显示。"
+        committed = true
+        let message = "安装完成，系统启动许可检查通过。\(configuration.presets.map(\.label).joined(separator: " 和 ")) 按钮将在重启 Codex 后显示。"
+        do { try pruneBackups(app, keeping: backup.deletingLastPathComponent()); return message }
+        catch { return message + "\n旧备份清理失败：\(error.localizedDescription)" }
     }
 
     func restore(_ app: URL, closeApp: Bool = true) throws -> String {
@@ -421,13 +429,27 @@ struct NativePatch {
             throw PatchFailure("应用在恢复期间更新了，已取消替换。")
         }
         try swap(stage, app)
-        return "已恢复官方原版应用。"
+        do { try pruneBackups(app); return "已恢复官方原版应用，已清理回滚备份。" }
+        catch { return "已恢复官方原版应用。备份清理失败：\(error.localizedDescription)" }
+    }
+
+    private func backupPrefix(_ app: URL) -> String {
+        sha256(Data(app.standardizedFileURL.path.utf8)) + "-"
+    }
+
+    private func pruneBackups(_ app: URL, keeping: URL? = nil) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: backupDirectory.path) else { return }
+        for folder in try fm.contentsOfDirectory(at: backupDirectory, includingPropertiesForKeys: nil)
+            where folder.lastPathComponent.hasPrefix(backupPrefix(app)) && folder.standardizedFileURL.path != keeping?.standardizedFileURL.path {
+            try fm.removeItem(at: folder)
+        }
     }
 
     private func originalBackup(_ marker: [String: Any]) throws -> URL {
         guard let path = marker["backupPath"] as? String else { throw PatchFailure("补丁没有原版备份记录。") }
         let backup = URL(fileURLWithPath: path).standardizedFileURL
-        guard backup.path.hasPrefix(Self.backupRoot.path + "/"),
+        guard backup.path.hasPrefix(backupDirectory.standardizedFileURL.path + "/"),
               try info(backup)["CFBundleShortVersionString"] as? String == marker["appVersion"] as? String,
               try Asar(backup.appendingPathComponent("Contents/Resources/app.asar")).headerHash == marker["originalHeaderHash"] as? String else { throw PatchFailure("找不到匹配的原版备份。") }
         try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", backup.path])

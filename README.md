@@ -11,7 +11,7 @@
 
 ### 安装与更新
 
-请使用 [1.2.2 发布页](https://github.com/nijigenCG/codex-model-presets/releases/tag/native-patch-v1.2.2) 的 `Codex-Model-Presets-Patch-1.2.2.dmg`。适配 Codex **26.1027.30824（build 22943）**，修复点击模型按钮时的 `No conversation available for model preset update` 错误。模型和推理强度按原生菜单方式选择，速度通过原生速度接口单独设置。仍支持增删最多 4 个按钮，沿用已有配置。
+请使用 [1.2.3 发布页](https://github.com/nijigenCG/codex-model-presets/releases/tag/native-patch-v1.2.3) 的 `Codex-Model-Presets-Patch-1.2.3.dmg`。适配 Codex **26.1027.30824（build 22943）**，修复点击模型按钮时的 `No conversation available for model preset update` 错误。模型和推理强度按原生菜单方式选择，速度通过原生速度接口单独设置。仍支持增删最多 4 个按钮，沿用已有配置。
 
 双击安装器，待当前回复结束后点击 **保存配置并安装**。安装器会备份完整原版应用，修改副本、更新 ASAR 完整性哈希并本地签名，通过签名、权限和系统进程加载检查后，退出并替换 Codex，再启动应用。安装器会观察新进程 5 秒；打不开或立即退出时，自动恢复原版并重新打开。
 
@@ -50,6 +50,8 @@
 ~/Library/Application Support/Codex Model Presets Patch/Backups/
 ```
 
+1.2.3 起，同一安装位置和原版内容复用一份备份；成功安装后清理该位置的旧版本备份，卸载恢复后清理该位置的回滚备份。失败安装会清理本次新建的备份。
+
 这是非官方客户端补丁，需使用 ad-hoc 签名，未经过 Apple 公证。macOS 可能要求允许打开安装器，或重新授权 Codex 的已有权限。补丁主应用无法保留需要 OpenAI 证书的应用组、推送和钥匙串组声明；依赖这些声明的功能尚未验证。若官方更新器无法更新，先卸载补丁恢复原版再更新。补丁不读取登录凭证。
 
 ### 构建与验证
@@ -76,7 +78,7 @@ npm test
 ./native-patch/tests/integration.sh /Applications/ChatGPT.app
 ```
 
-测试只替换 `.build/integration/` 中的应用副本，原版备份写入上面的备份目录。验证编译、匹配唯一性、混淆变量改名、生成代码语法、签名、受限权限拒绝、ASAR 内容与框架摘要、自定义配置注入和字节级恢复。实际启动测试使用临时 Electron 用户目录，运行 15 秒并检查主窗口完成加载、ready-to-show 和 React 渲染启动日志，结束后停止测试副本。安装前的系统加载检查仍使用挂起子进程；真实聊天按钮切换和焦点恢复需安装后验收。自动恢复针对打不开或进程立即退出，不能识别存活进程的白屏。
+测试应用和备份放在独立临时目录，退出时自动删除，不写入日常安装的备份目录。验证编译、匹配唯一性、混淆变量改名、生成代码语法、签名、受限权限拒绝、ASAR 内容与框架摘要、自定义配置注入和字节级恢复。实际启动测试使用临时 Electron 用户目录，运行 15 秒并检查主窗口完成加载、ready-to-show 和 React 渲染启动日志，结束后停止测试副本。安装前的系统加载检查仍使用挂起子进程；真实聊天按钮切换和焦点恢复需安装后验收。自动恢复针对打不开或进程立即退出，不能识别存活进程的白屏。
 
 ---
 

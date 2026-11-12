@@ -192,6 +192,9 @@ let args = CommandLine.arguments
 if args.count > 1 {
     do {
         var patch = NativePatch(resources: Bundle.main.resourceURL!)
+        if let path = ProcessInfo.processInfo.environment["CODEX_MODEL_PRESETS_TEST_BACKUP_ROOT"] {
+            patch.backupDirectory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        }
         guard args.count >= 3 else { throw PatchFailure("用法：--check/--install/--restore/--startup-check APP；--prepare-copy ORIGINAL COPY [CONFIG.json]") }
         let app = URL(fileURLWithPath: args[2])
         switch args[1] {

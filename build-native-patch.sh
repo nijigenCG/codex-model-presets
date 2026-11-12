@@ -2,7 +2,8 @@
 set -euo pipefail
 project_dir="${0:A:h}"
 app_dir="$project_dir/dist/Codex 模型按钮补丁.app"
-dmg_dir="$project_dir/.build/native-patch-dmg"
+dmg_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-presets-dmg.XXXXXX")
+trap 'rm -rf -- "$dmg_dir"' EXIT
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources" "$dmg_dir"
 cp "$project_dir/native-patch/Info.plist" "$app_dir/Contents/Info.plist"
 cp "$project_dir/native-patch/presets.js" "$project_dir/native-patch/presets.css" "$app_dir/Contents/Resources/"
